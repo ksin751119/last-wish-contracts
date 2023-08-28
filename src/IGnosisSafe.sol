@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
-import {Enum} from "./Enum.sol";
+import {Enum} from './Enum.sol';
 
 interface IGnosisSafe {
     function nonce() external view returns (uint256);
@@ -33,5 +33,5 @@ interface IGnosisSafe {
         address gasToken,
         address refundReceiver,
         uint256 _nonce
-    ) public view returns (bytes32)
+    ) external view returns (bytes32);
 }
