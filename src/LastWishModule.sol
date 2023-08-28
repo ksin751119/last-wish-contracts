@@ -32,7 +32,6 @@ contract LastWishModule {
         require(heir.inheritingStart == 0, 'have been inherited');
         require(heir.recipient == msg.sender, 'Not safe heir');
         heir.inheritingStart = block.timestamp;
-        // heirs[msg.sender] = heir;
         emit ApplyForSafeTransfer(msg.sender, heir.recipient, heir.timeLock, heir.inheritingStart);
     }
 
