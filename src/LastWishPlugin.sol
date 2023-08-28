@@ -30,8 +30,8 @@ contract LastWishPlugin is BasePluginWithEventMetadata {
         BasePluginWithEventMetadata(
             PluginMetadata({
                 name: 'LastWish Plugin',
-                version: '0.1.0',
-                requiresRootAccess: false,
+                version: '0.0.1',
+                requiresRootAccess: true,
                 iconUrl: '',
                 appUrl: ''
             })
@@ -43,16 +43,16 @@ contract LastWishPlugin is BasePluginWithEventMetadata {
         emit SetHeir(msg.sender, recipient_, timeLock_);
     }
 
-    function applyForSafeTransfer(ISafe safe) public {
-        Heir memory heir = heirs[address(safe)];
+    function applyForSafeTransfer(address safe) public {
+        Heir memory heir = heirs[safe];
         require(heir.recipient != address(0), 'not set heir yet');
         require(heir.inheritingStart == 0, 'have been inherited');
         require(heir.recipient == msg.sender, 'Not safe heir');
-        heir.inheritingStart = block.timestamp;
+        heirs[safe].inheritingStart = block.timestamp;
         emit ApplyForSafeTransfer(msg.sender, heir.recipient, heir.timeLock, heir.inheritingStart);
     }
 
-    function claimSafe(ISafeProtocolManager manager, ISafe safe) public {
+    function claimSafe(ISafeProtocolManager manager, address safe) public {
         // Authorize heir and information
         Heir memory heir = heirs[address(safe)];
         require(heir.recipient != address(0), 'not set heir');
@@ -62,7 +62,7 @@ contract LastWishPlugin is BasePluginWithEventMetadata {
         // Prepare safe transaction
         SafeProtocolAction[] memory transactions = new SafeProtocolAction[](1);
         transactions[0] = SafeProtocolAction({
-            to: payable(address(safe)),
+            to: payable(safe),
             value: 0,
             data: abi.encodeWithSelector(OwnerManager.addOwnerWithThreshold.selector, heir.recipient, 1)
         });
@@ -72,7 +72,7 @@ contract LastWishPlugin is BasePluginWithEventMetadata {
             nonce: 0,
             metadataHash: bytes32(0)
         });
-        ISafeProtocolManager(manager).executeTransaction(safe, transaction);
+        ISafeProtocolManager(manager).executeTransaction(ISafe(safe), transaction);
 
         // Reset safe information
         delete heirs[address(safe)];
