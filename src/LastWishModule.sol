@@ -8,6 +8,7 @@ contract LastWishModule {
 
     // Safe -> Heir
     mapping(address => Heir) public heirs;
+    // TODO: linked heir => safe
 
     struct Heir {
         address recipient;
@@ -16,7 +17,7 @@ contract LastWishModule {
     }
 
     event SetHeir(address indexed safe, address recipient, uint256 timeLock);
-    event TransferSafe(address indexed safe, address recipient, uint256 timeLock, uint256 inheritingStart);
+    event ApplyForSafeTransfer(address indexed safe, address recipient, uint256 timeLock, uint256 inheritingStart);
     event ClaimSafe(address indexed safe, address recipient);
     event RejectSafe(address indexed safe, address recipient);
 
@@ -25,13 +26,14 @@ contract LastWishModule {
         emit SetHeir(msg.sender, recipient_, timeLock_);
     }
 
-    function transferSafe() public {
-        Heir memory heir = heirs[msg.sender];
-        require(heir.recipient != address(0), 'not set heir');
+    function applyForSafeTransfer(IGnosisSafe safe) public {
+        Heir memory heir = heirs[address(safe)];
+        require(heir.recipient != address(0), 'not set heir yet');
         require(heir.inheritingStart == 0, 'have been inherited');
+        require(heir.recipient == msg.sender, 'Not safe heir');
         heir.inheritingStart = block.timestamp;
-        heirs[msg.sender] = heir;
-        emit TransferSafe(msg.sender, heir.recipient, heir.timeLock, heir.inheritingStart);
+        // heirs[msg.sender] = heir;
+        emit ApplyForSafeTransfer(msg.sender, heir.recipient, heir.timeLock, heir.inheritingStart);
     }
 
     function claimSafe(IGnosisSafe safe) public {
