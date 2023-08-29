@@ -7,14 +7,13 @@ import {Test} from 'forge-std/Test.sol';
 import {SafeProxyFactory} from 'safe-contracts/proxies/SafeProxyFactory.sol';
 import {SafeProxy} from 'safe-contracts/proxies/SafeProxy.sol';
 import {Safe} from 'safe-contracts/Safe.sol';
-import {SafeProtocolRegistry} from 'safe-protocol/SafeProtocolRegistry.sol';
-import {SafeProtocolManager} from 'safe-protocol/SafeProtocolManager.sol';
 import {Enum} from 'safe-protocol/common/Enum.sol';
 import {OwnerManager} from 'safe-contracts/base/OwnerManager.sol';
-import {PluginMetadata} from '../src/PluginBase.sol';
-import {LastWishPlugin} from '../src/LastWishPlugin.sol';
+import {LastWishModule} from '../src/LastWishModule.sol';
 
-contract LastWishPluginTest is Test {
+import 'forge-std/console.sol';
+
+contract LastWishmoduleTest is Test {
     uint256 private constant _SET_TIME_LOCK = 5 minutes;
 
     address public owner;
@@ -23,9 +22,7 @@ contract LastWishPluginTest is Test {
     address public heir;
     SafeProxy public s;
 
-    SafeProtocolRegistry public registry;
-    SafeProtocolManager public manager;
-    LastWishPlugin public plugin;
+    LastWishModule public module;
     Safe public safeProxy;
 
     event SetHeir(address indexed safe, address recipient, uint256 timeLock);
@@ -40,9 +37,7 @@ contract LastWishPluginTest is Test {
         heir = makeAddr('owner');
 
         // safe-protocol sc
-        registry = new SafeProtocolRegistry(owner);
-        manager = new SafeProtocolManager(owner, address(registry));
-        plugin = new LastWishPlugin();
+        module = new LastWishModule();
 
         // Initialize Safe
         SafeProxyFactory safeFactory = new SafeProxyFactory();
@@ -64,44 +59,35 @@ contract LastWishPluginTest is Test {
         s = safeFactory.createProxyWithNonce(address(safe), initializer, 50);
         safeProxy = Safe(payable(address(s)));
 
-        // Enable manager module
+        // Enable module
         vm.prank(address(safeProxy));
-        safeProxy.enableModule(address(manager));
-        assertEq(safeProxy.isModuleEnabled(address(manager)), true);
-
-        // Register plugin to registry
-        vm.prank(owner);
-        registry.addIntegration(address(plugin), Enum.IntegrationType.Plugin);
-
-        // Enable plug
-        vm.prank(address(safeProxy));
-        manager.enablePlugin(address(plugin), true);
-        assertEq(manager.isPluginEnabled(address(safeProxy), address(plugin)), true);
+        safeProxy.enableModule(address(module));
+        assertTrue(safeProxy.isModuleEnabled(address(module)));
     }
 
     function testGetHeirSafeList() public {
-        address[] memory safes = plugin.getHeirSafes(heir);
+        address[] memory safes = module.getHeirSafes(heir);
         assertEq(safes.length, 0);
 
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
         // Verify
-        safes = plugin.getHeirSafes(heir);
+        safes = module.getHeirSafes(heir);
         assertEq(safes.length, 1);
         assertEq(safes[0], address(safeProxy));
 
         vm.prank(safeMock);
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
-        safes = plugin.getHeirSafes(heir);
+        safes = module.getHeirSafes(heir);
         assertEq(safes.length, 2);
         assertEq(safes[0], address(safeProxy));
         assertEq(safes[1], safeMock);
     }
 
     function testSetHeir() public {
-        (address recipient, uint256 timeLock, uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        (address recipient, uint256 timeLock, uint256 inheritingStart) = module.heirs(address(safeProxy));
         assertEq(recipient, address(0));
         assertEq(timeLock, 0);
         assertEq(inheritingStart, 0);
@@ -109,10 +95,10 @@ contract LastWishPluginTest is Test {
         vm.expectEmit(true, true, true, false);
         emit SetHeir(address(safeProxy), heir, _SET_TIME_LOCK);
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
         // Verify
-        (recipient, timeLock, inheritingStart) = plugin.heirs(address(safeProxy));
+        (recipient, timeLock, inheritingStart) = module.heirs(address(safeProxy));
         assertEq(recipient, heir);
         assertEq(timeLock, _SET_TIME_LOCK);
         assertEq(inheritingStart, 0);
@@ -123,16 +109,16 @@ contract LastWishPluginTest is Test {
     function testApplyForSafeTransfer() public {
         // Set Heir
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
         // Apply safe transfer
         vm.expectEmit(true, true, true, false);
         emit ApplyForSafeTransfer(address(safeProxy), heir, _SET_TIME_LOCK, block.timestamp);
         vm.prank(heir);
-        plugin.applyForSafeTransfer(address(safeProxy));
+        module.applyForSafeTransfer(address(safeProxy));
 
         // Verify
-        (, , uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        (, , uint256 inheritingStart) = module.heirs(address(safeProxy));
         assertGt(inheritingStart, 0);
     }
 
@@ -143,11 +129,11 @@ contract LastWishPluginTest is Test {
     function testClaimSafe() public {
         // Set Heir
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
         // Apply safe transfer
         vm.prank(heir);
-        plugin.applyForSafeTransfer(address(safeProxy));
+        module.applyForSafeTransfer(address(safeProxy));
 
         // Claim safe
         assertEq(OwnerManager(address(safeProxy)).isOwner(heir), false);
@@ -155,7 +141,7 @@ contract LastWishPluginTest is Test {
         vm.expectEmit(true, true, false, false);
         emit ClaimSafe(address(safeProxy), heir);
         vm.prank(heir);
-        plugin.claimSafe(manager, address(safeProxy));
+        module.claimSafe(address(safeProxy));
 
         // Verify
         assertTrue(OwnerManager(address(safeProxy)).isOwner(heir));
@@ -168,11 +154,11 @@ contract LastWishPluginTest is Test {
     function testRejectSafeTransfer() public {
         // Set Heir
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, _SET_TIME_LOCK);
+        module.setHeir(heir, _SET_TIME_LOCK);
 
         // Apply safe transfer
         vm.prank(heir);
-        plugin.applyForSafeTransfer(address(safeProxy));
+        module.applyForSafeTransfer(address(safeProxy));
 
         // Claim safe
         assertEq(OwnerManager(address(safeProxy)).isOwner(heir), false);
@@ -180,15 +166,15 @@ contract LastWishPluginTest is Test {
         vm.expectEmit(true, true, false, false);
         emit RejectSafeTransfer(address(safeProxy), heir);
         vm.prank(address(safeProxy));
-        plugin.rejectSafeTransfer();
+        module.rejectSafeTransfer();
 
         // Verify
-        (address recipient, uint256 timeLock, uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        (address recipient, uint256 timeLock, uint256 inheritingStart) = module.heirs(address(safeProxy));
         assertEq(recipient, address(0));
         assertEq(timeLock, 0);
         assertEq(inheritingStart, 0);
 
-        address[] memory safes = plugin.getHeirSafes(heir);
+        address[] memory safes = module.getHeirSafes(heir);
         assertEq(safes.length, 0);
     }
 

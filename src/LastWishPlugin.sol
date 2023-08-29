@@ -58,7 +58,7 @@ contract LastWishPlugin is BasePluginWithEventMetadata {
         require(heir.recipient != address(0), 'Not set heir yet');
         require(heir.inheritingStart == 0, 'Have been inherited');
         require(heir.recipient == msg.sender, 'Not safe heir');
-        require(_heirSafeList[heir.recipient]._exist(safe), 'Not in heir safe list');
+        require(_heirSafeList[msg.sender]._exist(safe), 'Not in heir safe list');
 
         heirs[safe].inheritingStart = block.timestamp;
         emit ApplyForSafeTransfer(safe, heir.recipient, heir.timeLock, heir.inheritingStart);
