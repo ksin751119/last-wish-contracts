@@ -7,25 +7,23 @@ import {Test} from 'forge-std/Test.sol';
 import {SafeProxyFactory} from 'safe-contracts/proxies/SafeProxyFactory.sol';
 import {SafeProxy} from 'safe-contracts/proxies/SafeProxy.sol';
 import {Safe} from 'safe-contracts/Safe.sol';
-import {ISafe} from 'safe-protocol/interfaces/Accounts.sol';
 import {SafeProtocolRegistry} from 'safe-protocol/SafeProtocolRegistry.sol';
 import {SafeProtocolManager} from 'safe-protocol/SafeProtocolManager.sol';
 import {SafeTransaction, SafeProtocolAction} from 'safe-protocol/DataTypes.sol';
 import {Enum} from 'safe-protocol/common/Enum.sol';
 import {ERC20, IERC20} from 'openzeppelin-contracts/contracts/token/ERC20/ERC20.sol';
 import {OwnerManager} from 'safe-contracts/base/OwnerManager.sol';
-
 import {PluginMetadata} from '../src/PluginBase.sol';
 import {LastWishPlugin} from '../src/LastWishPlugin.sol';
 
-import {console2} from 'forge-std/console2.sol';
-
-// NOTE: safe error codes: https://github.com/safe-global/safe-contracts/blob/main/docs/error_codes.md
+import 'forge-std/console.sol';
 
 contract LastWishPluginTest is Test {
-    // ecosystem agents
+    uint256 private constant _SET_TIME_LOCK = 5 minutes;
+
     address public owner;
     address public safeOwner;
+    address public safeMock;
     address public heir;
     SafeProxy public s;
 
@@ -34,9 +32,15 @@ contract LastWishPluginTest is Test {
     LastWishPlugin public plugin;
     Safe public safeProxy;
 
+    event SetHeir(address indexed safe, address recipient, uint256 timeLock);
+    event ApplyForSafeTransfer(address indexed safe, address recipient, uint256 timeLock, uint256 inheritingStart);
+    event ClaimSafe(address indexed safe, address recipient);
+    event RejectSafeTransfer(address indexed safe, address recipient);
+
     function setUp() public {
         owner = makeAddr('owner');
         safeOwner = makeAddr('safeOwner');
+        safeMock = makeAddr('safeMock');
         heir = makeAddr('owner');
 
         // safe-protocol sc
@@ -79,12 +83,71 @@ contract LastWishPluginTest is Test {
         assertEq(manager.isPluginEnabled(address(safeProxy), address(plugin)), true);
     }
 
-    function testClaimSafe() public {
-        uint256 timeLock = 5 minutes;
+    function testGetHeirSafeList() public {
+        address[] memory safes = plugin.getHeirSafes(heir);
+        assertEq(safes.length, 0);
 
+        vm.prank(address(safeProxy));
+        plugin.setHeir(heir, _SET_TIME_LOCK);
+
+        // Verify
+        safes = plugin.getHeirSafes(heir);
+        assertEq(safes.length, 1);
+        assertEq(safes[0], address(safeProxy));
+
+        vm.prank(safeMock);
+        plugin.setHeir(heir, _SET_TIME_LOCK);
+
+        safes = plugin.getHeirSafes(heir);
+        assertEq(safes.length, 2);
+        assertEq(safes[0], address(safeProxy));
+        assertEq(safes[1], safeMock);
+    }
+
+    function testSetHeir() public {
+        (address recipient, uint256 timeLock, uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        assertEq(recipient, address(0));
+        assertEq(timeLock, 0);
+        assertEq(inheritingStart, 0);
+
+        vm.expectEmit(true, true, true, false);
+        emit SetHeir(address(safeProxy), heir, _SET_TIME_LOCK);
+        vm.prank(address(safeProxy));
+        plugin.setHeir(heir, _SET_TIME_LOCK);
+
+        // Verify
+        (recipient, timeLock, inheritingStart) = plugin.heirs(address(safeProxy));
+        assertEq(recipient, heir);
+        assertEq(timeLock, _SET_TIME_LOCK);
+        assertEq(inheritingStart, 0);
+    }
+
+    // TODO: testSetHeirMultipleTimes
+
+    function testApplyForSafeTransfer() public {
         // Set Heir
         vm.prank(address(safeProxy));
-        plugin.setHeir(heir, timeLock);
+        plugin.setHeir(heir, _SET_TIME_LOCK);
+
+        // Apply safe transfer
+        vm.expectEmit(true, true, true, false);
+        emit ApplyForSafeTransfer(address(safeProxy), heir, _SET_TIME_LOCK, block.timestamp);
+        vm.prank(heir);
+        plugin.applyForSafeTransfer(address(safeProxy));
+
+        // Verify
+        (, , uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        assertGt(inheritingStart, 0);
+    }
+
+    // TODO: testCannotApplyBeforeHeirNotSet
+    // TODO: testCannotApplyTwice
+    // TODO: testCannotApplyByInvalidHeir
+
+    function testClaimSafe() public {
+        // Set Heir
+        vm.prank(address(safeProxy));
+        plugin.setHeir(heir, _SET_TIME_LOCK);
 
         // Apply safe transfer
         vm.prank(heir);
@@ -92,11 +155,47 @@ contract LastWishPluginTest is Test {
 
         // Claim safe
         assertEq(OwnerManager(address(safeProxy)).isOwner(heir), false);
-        vm.warp(block.timestamp + timeLock + 1);
+        vm.warp(block.timestamp + _SET_TIME_LOCK + 1);
+        vm.expectEmit(true, true, false, false);
+        emit ClaimSafe(address(safeProxy), heir);
         vm.prank(heir);
         plugin.claimSafe(manager, address(safeProxy));
 
         // Verify
-        assertEq(OwnerManager(address(safeProxy)).isOwner(heir), true);
+        assertTrue(OwnerManager(address(safeProxy)).isOwner(heir));
     }
+
+    // TODO: testCannotClaimBeforeHeirNotSet
+    // TODO: testCannotClaimBeforeNotInherit
+    // TODO: testCannotClaimBeforeTimeLockAchieved
+
+    function testRejectSafeTransfer() public {
+        // Set Heir
+        vm.prank(address(safeProxy));
+        plugin.setHeir(heir, _SET_TIME_LOCK);
+
+        // Apply safe transfer
+        vm.prank(heir);
+        plugin.applyForSafeTransfer(address(safeProxy));
+
+        // Claim safe
+        assertEq(OwnerManager(address(safeProxy)).isOwner(heir), false);
+        vm.warp(block.timestamp + _SET_TIME_LOCK + 1);
+        vm.expectEmit(true, true, false, false);
+        emit RejectSafeTransfer(address(safeProxy), heir);
+        vm.prank(address(safeProxy));
+        plugin.rejectSafeTransfer();
+
+        // Verify
+        (address recipient, uint256 timeLock, uint256 inheritingStart) = plugin.heirs(address(safeProxy));
+        assertEq(recipient, address(0));
+        assertEq(timeLock, 0);
+        assertEq(inheritingStart, 0);
+
+        address[] memory safes = plugin.getHeirSafes(heir);
+        assertEq(safes.length, 0);
+    }
+
+    // TODO: testCannotRejectBeforeHeirNotSet
+    // TODO: testCannotRejectBeforeNotInherit
 }
